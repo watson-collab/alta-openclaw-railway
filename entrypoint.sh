@@ -32,8 +32,11 @@ GOGCREDS
 }
 GOGCONF
 
+  # Fix ownership BEFORE import so openclaw user can write to the keyring
+  chown -R openclaw:openclaw "$GOG_HOME/.config"
+
   # Import refresh token if not already present
-  if ! gosu openclaw gog auth list 2>/dev/null | grep -q "$GOG_ACCOUNT"; then
+  if ! gosu openclaw gog auth list 2>/dev/null | grep -q "${GOG_ACCOUNT:-watson@drinkaltawater.com}"; then
     TMPTOKEN=$(mktemp /tmp/gog-token-XXXXXX.json)
     cat > "$TMPTOKEN" <<GOGTOKEN
 {
@@ -54,13 +57,11 @@ GOGCONF
 }
 GOGTOKEN
     chown openclaw:openclaw "$TMPTOKEN"
-    gosu openclaw gog auth tokens import "$TMPTOKEN" 2>/dev/null && echo "[gog] Token imported for $GOG_ACCOUNT" || echo "[gog] Token import failed"
+    gosu openclaw gog auth tokens import "$TMPTOKEN" 2>&1 && echo "[gog] Token imported for $GOG_ACCOUNT" || echo "[gog] Token import failed — check logs above"
     rm -f "$TMPTOKEN"
   else
     echo "[gog] Account $GOG_ACCOUNT already configured"
   fi
-
-  chown -R openclaw:openclaw "$GOG_CONFIG_DIR"
 fi
 
 exec gosu openclaw node src/server.js
