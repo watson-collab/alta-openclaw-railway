@@ -35,6 +35,9 @@ ENV HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"
 ENV HOMEBREW_CELLAR="/home/linuxbrew/.linuxbrew/Cellar"
 ENV HOMEBREW_REPOSITORY="/home/linuxbrew/.linuxbrew/Homebrew"
 
+# Install gog CLI (Google Workspace CLI) for Gmail/Calendar access
+RUN brew install steipete/tap/gogcli
+
 ENV PORT=8080
 ENV OPENCLAW_ENTRY=/usr/local/lib/node_modules/openclaw/dist/entry.js
 EXPOSE 8080
