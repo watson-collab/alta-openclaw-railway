@@ -1,23 +1,36 @@
 #!/bin/bash
 set -e
 
-mkdir -p /data/.openclaw /data/workspace
-chown -R openclaw:openclaw /data
-chmod 700 /data
+# Resolve the openclaw user UID — fall back to 1001 if user doesn't exist
+OC_UID=$(id -u openclaw 2>/dev/null || echo 1001)
+OC_GID=$(id -g openclaw 2>/dev/null || echo 1001)
 
+# Ensure openclaw user exists (create if missing)
+if ! id openclaw &>/dev/null; then
+  useradd -u 1001 -m -s /bin/bash openclaw 2>/dev/null || true
+  OC_UID=1001
+  OC_GID=1001
+fi
+
+# Create required directories on the persistent volume
+mkdir -p /data/.openclaw /data/workspace /data/.gogcli
+# Only chown the dirs we care about — NOT the huge .linuxbrew tree
+chown -R "$OC_UID:$OC_GID" /data/.openclaw /data/workspace /data/.gogcli
+chown "$OC_UID:$OC_GID" /data
+chmod 755 /data
+
+# Linuxbrew persistence
 if [ ! -d /data/.linuxbrew ]; then
   cp -a /home/linuxbrew/.linuxbrew /data/.linuxbrew
+  chown -R "$OC_UID:$OC_GID" /data/.linuxbrew
 fi
 
 rm -rf /home/linuxbrew/.linuxbrew
 ln -sfn /data/.linuxbrew /home/linuxbrew/.linuxbrew
 
 # Configure gog CLI if credentials are provided via env vars
-# Persist config to /data volume so it survives restarts
-# Symlink to BOTH /home/openclaw and /home/node (OpenClaw may use either)
 if [ -n "$GOG_CLIENT_ID" ] && [ -n "$GOG_REFRESH_TOKEN" ]; then
   GOG_DATA_DIR="/data/.gogcli"
-  mkdir -p "$GOG_DATA_DIR"
 
   # Write OAuth client credentials
   cat > "$GOG_DATA_DIR/credentials.json" <<GOGCREDS
@@ -34,9 +47,9 @@ GOGCREDS
 }
 GOGCONF
 
-  chown -R openclaw:openclaw "$GOG_DATA_DIR"
+  chown -R "$OC_UID:$OC_GID" "$GOG_DATA_DIR"
 
-  # Symlink gog config for all possible users
+  # Symlink gog config for all possible home dirs
   for UHOME in /home/openclaw /home/node /root; do
     if [ -d "$UHOME" ]; then
       mkdir -p "$UHOME/.config"
@@ -56,6 +69,7 @@ GOGCONF
   "services": ["calendar", "gmail"],
   "scopes": [
     "email",
+    "https://www.googleapis.com/auth/business.manage",
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.settings.basic",
@@ -67,7 +81,7 @@ GOGCONF
   "refresh_token": "$GOG_REFRESH_TOKEN"
 }
 GOGTOKEN
-    chown openclaw:openclaw "$TMPTOKEN"
+    chown "$OC_UID:$OC_GID" "$TMPTOKEN"
     gosu openclaw gog auth tokens import "$TMPTOKEN" && echo "[gog] Token imported for $GOG_ACCOUNT" || echo "[gog] Token import FAILED" >&2
     rm -f "$TMPTOKEN"
   fi
