@@ -1,6 +1,7 @@
 #!/bin/bash
 set -e
 
+mkdir -p /data/.openclaw /data/workspace
 chown -R openclaw:openclaw /data
 chmod 700 /data
 
