@@ -12,13 +12,14 @@ rm -rf /home/linuxbrew/.linuxbrew
 ln -sfn /data/.linuxbrew /home/linuxbrew/.linuxbrew
 
 # Configure gog CLI if credentials are provided via env vars
+# Persist config to /data volume so it survives restarts
+# Symlink to BOTH /home/openclaw and /home/node (OpenClaw may use either)
 if [ -n "$GOG_CLIENT_ID" ] && [ -n "$GOG_REFRESH_TOKEN" ]; then
-  GOG_HOME="/home/openclaw"
-  GOG_CONFIG_DIR="$GOG_HOME/.config/gogcli"
-  mkdir -p "$GOG_CONFIG_DIR"
+  GOG_DATA_DIR="/data/.gogcli"
+  mkdir -p "$GOG_DATA_DIR"
 
   # Write OAuth client credentials
-  cat > "$GOG_CONFIG_DIR/credentials.json" <<GOGCREDS
+  cat > "$GOG_DATA_DIR/credentials.json" <<GOGCREDS
 {
   "client_id": "$GOG_CLIENT_ID",
   "client_secret": "$GOG_CLIENT_SECRET"
@@ -26,16 +27,25 @@ if [ -n "$GOG_CLIENT_ID" ] && [ -n "$GOG_REFRESH_TOKEN" ]; then
 GOGCREDS
 
   # Set file-based keyring (no system keychain in container)
-  cat > "$GOG_CONFIG_DIR/config.json" <<GOGCONF
+  cat > "$GOG_DATA_DIR/config.json" <<GOGCONF
 {
   "keyring_backend": "file"
 }
 GOGCONF
 
-  # Fix ownership BEFORE import so openclaw user can write to the keyring
-  chown -R openclaw:openclaw "$GOG_HOME/.config"
+  chown -R openclaw:openclaw "$GOG_DATA_DIR"
+
+  # Symlink gog config for all possible users
+  for UHOME in /home/openclaw /home/node /root; do
+    if [ -d "$UHOME" ]; then
+      mkdir -p "$UHOME/.config"
+      rm -rf "$UHOME/.config/gogcli"
+      ln -sfn "$GOG_DATA_DIR" "$UHOME/.config/gogcli"
+    fi
+  done
 
   # Import refresh token if not already present
+  export GOG_KEYRING_PASSWORD="${GOG_KEYRING_PASSWORD:-openclaw}"
   if ! gosu openclaw gog auth list 2>/dev/null | grep -q "${GOG_ACCOUNT:-watson@drinkaltawater.com}"; then
     TMPTOKEN=$(mktemp /tmp/gog-token-XXXXXX.json)
     cat > "$TMPTOKEN" <<GOGTOKEN
@@ -57,10 +67,8 @@ GOGCONF
 }
 GOGTOKEN
     chown openclaw:openclaw "$TMPTOKEN"
-    gosu openclaw gog auth tokens import "$TMPTOKEN" 2>&1 && echo "[gog] Token imported for $GOG_ACCOUNT" || echo "[gog] Token import failed — check logs above"
+    gosu openclaw gog auth tokens import "$TMPTOKEN" && echo "[gog] Token imported for $GOG_ACCOUNT" || echo "[gog] Token import FAILED" >&2
     rm -f "$TMPTOKEN"
-  else
-    echo "[gog] Account $GOG_ACCOUNT already configured"
   fi
 fi
 
