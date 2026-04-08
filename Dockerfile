@@ -22,12 +22,13 @@ RUN corepack enable && pnpm install --frozen-lockfile --prod
 COPY src ./src
 COPY --chmod=755 entrypoint.sh ./entrypoint.sh
 
-RUN useradd -m -s /bin/bash openclaw \
-  && chown -R openclaw:openclaw /app \
-  && mkdir -p /data && chown openclaw:openclaw /data \
-  && mkdir -p /home/linuxbrew/.linuxbrew && chown -R openclaw:openclaw /home/linuxbrew
+# Create /data owned by node user (UID 1000) from the start
+RUN mkdir -p /data && chown -R node:node /data \
+  && chown -R node:node /app \
+  && mkdir -p /home/linuxbrew/.linuxbrew && chown -R node:node /home/linuxbrew
 
-USER openclaw
+# Install Homebrew + gog as the node user
+USER node
 RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
@@ -35,7 +36,6 @@ ENV HOMEBREW_PREFIX="/home/linuxbrew/.linuxbrew"
 ENV HOMEBREW_CELLAR="/home/linuxbrew/.linuxbrew/Cellar"
 ENV HOMEBREW_REPOSITORY="/home/linuxbrew/.linuxbrew/Homebrew"
 
-# Install gog CLI (Google Workspace CLI) for Gmail/Calendar access
 RUN brew install steipete/tap/gogcli
 
 ENV PORT=8080

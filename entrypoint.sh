@@ -1,38 +1,28 @@
 #!/bin/bash
 set -e
 
-# Resolve the openclaw user UID — fall back to 1001 if user doesn't exist
-OC_UID=$(id -u openclaw 2>/dev/null || echo 1001)
-OC_GID=$(id -g openclaw 2>/dev/null || echo 1001)
+# === PERMISSION FIX ===
+# Everything runs as 'node' user (UID 1000) — the default user in node:22-bookworm.
+# No custom users, no UID mismatches, no gosu complexity.
 
-# Ensure openclaw user exists (create if missing)
-if ! id openclaw &>/dev/null; then
-  useradd -u 1001 -m -s /bin/bash openclaw 2>/dev/null || true
-  OC_UID=1001
-  OC_GID=1001
-fi
-
-# Create required directories on the persistent volume
+# Create dirs and fix ownership on the persistent volume
 mkdir -p /data/.openclaw /data/workspace /data/.gogcli
-# Only chown the dirs we care about — NOT the huge .linuxbrew tree
-chown -R "$OC_UID:$OC_GID" /data/.openclaw /data/workspace /data/.gogcli
-chown "$OC_UID:$OC_GID" /data
-chmod 755 /data
+chown -R node:node /data/.openclaw /data/workspace /data/.gogcli
+chown node:node /data
+chmod 755 /data /data/.openclaw /data/workspace /data/.gogcli
 
-# Linuxbrew persistence
+# Linuxbrew persistence — copy from image to volume on first run
 if [ ! -d /data/.linuxbrew ]; then
   cp -a /home/linuxbrew/.linuxbrew /data/.linuxbrew
-  chown -R "$OC_UID:$OC_GID" /data/.linuxbrew
+  chown -R node:node /data/.linuxbrew
 fi
-
 rm -rf /home/linuxbrew/.linuxbrew
 ln -sfn /data/.linuxbrew /home/linuxbrew/.linuxbrew
 
-# Configure gog CLI if credentials are provided via env vars
+# === GOG CLI SETUP ===
 if [ -n "$GOG_CLIENT_ID" ] && [ -n "$GOG_REFRESH_TOKEN" ]; then
   GOG_DATA_DIR="/data/.gogcli"
 
-  # Write OAuth client credentials
   cat > "$GOG_DATA_DIR/credentials.json" <<GOGCREDS
 {
   "client_id": "$GOG_CLIENT_ID",
@@ -40,27 +30,22 @@ if [ -n "$GOG_CLIENT_ID" ] && [ -n "$GOG_REFRESH_TOKEN" ]; then
 }
 GOGCREDS
 
-  # Set file-based keyring (no system keychain in container)
   cat > "$GOG_DATA_DIR/config.json" <<GOGCONF
 {
   "keyring_backend": "file"
 }
 GOGCONF
 
-  chown -R "$OC_UID:$OC_GID" "$GOG_DATA_DIR"
+  chown -R node:node "$GOG_DATA_DIR"
 
-  # Symlink gog config for all possible home dirs
-  for UHOME in /home/openclaw /home/node /root; do
-    if [ -d "$UHOME" ]; then
-      mkdir -p "$UHOME/.config"
-      rm -rf "$UHOME/.config/gogcli"
-      ln -sfn "$GOG_DATA_DIR" "$UHOME/.config/gogcli"
-    fi
-  done
+  # Symlink gog config to node user's home
+  mkdir -p /home/node/.config
+  rm -rf /home/node/.config/gogcli
+  ln -sfn "$GOG_DATA_DIR" /home/node/.config/gogcli
 
   # Import refresh token if not already present
   export GOG_KEYRING_PASSWORD="${GOG_KEYRING_PASSWORD:-openclaw}"
-  if ! gosu openclaw gog auth list 2>/dev/null | grep -q "${GOG_ACCOUNT:-watson@drinkaltawater.com}"; then
+  if ! su -s /bin/bash node -c "gog auth list" 2>/dev/null | grep -q "${GOG_ACCOUNT:-watson@drinkaltawater.com}"; then
     TMPTOKEN=$(mktemp /tmp/gog-token-XXXXXX.json)
     cat > "$TMPTOKEN" <<GOGTOKEN
 {
@@ -81,10 +66,12 @@ GOGCONF
   "refresh_token": "$GOG_REFRESH_TOKEN"
 }
 GOGTOKEN
-    chown "$OC_UID:$OC_GID" "$TMPTOKEN"
-    gosu openclaw gog auth tokens import "$TMPTOKEN" && echo "[gog] Token imported for $GOG_ACCOUNT" || echo "[gog] Token import FAILED" >&2
+    chown node:node "$TMPTOKEN"
+    su -s /bin/bash node -c "GOG_KEYRING_PASSWORD='$GOG_KEYRING_PASSWORD' gog auth tokens import '$TMPTOKEN'" \
+      && echo "[gog] Token imported" || echo "[gog] Token import FAILED" >&2
     rm -f "$TMPTOKEN"
   fi
 fi
 
-exec gosu openclaw node src/server.js
+# === START SERVER AS NODE USER ===
+exec gosu node node src/server.js
